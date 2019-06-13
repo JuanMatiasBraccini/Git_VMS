@@ -1,0 +1,171 @@
+---
+title: "HMM for Shark fisheries"
+author: "Matias Braccini, and Marie-Pierre Etienne"
+date: "April 16, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+list_used_packages <- c("depmixS4",  "tidyverse", "ggplot2", "ggmap")
+## Be careful to laod dplyr after ggmap or use dplyr::summarize instead of summaryze
+ind <- which(!list_used_packages %in% installed.packages())
+list_packages_to_install <- list_used_packages[ind]
+if (length(list_packages_to_install) > 0 ) install.packages(list_packages_to_install) 
+invisible(lapply(list_used_packages , require, character.only = TRUE))
+```
+
+
+## First try with depmixS4 package
+
+### Simulation of a HMM 
+
+#### Simulation parameters
+
+We set the parameters to some given values. The transistion matrix between states is defined by
+
+```{r}
+trans_mat <- matrix( c( .6, .3, 0, 0, .7, .6, .4, 0, .4), ncol = 3, nrow = 3)
+```
+
+
+We simulate some observe speed depending on the states
+
+- State 1 corresponds to fishing = waiting. A toy example would be to have a log normal distribution with mean .1 and sd .15
+- State 2 corresponds to retrieving the gear. mean 1 and sd .25
+- State 3 corresponds to cruising. A mean 6 sd .4
+```{r}
+mu <- c(.1, 1, 6)
+sigma <- c(.15, .25, .4)
+```
+
+
+We set the length of the sequence to 
+```{r}
+n <- 7 * 48
+```
+
+#### Simulation of the Hidden states
+
+```{r}
+hidden_states <- rep(NA, n)
+hidden_states[1] <- 3
+
+for( i in 2:n) {
+  hidden_states[i] <- sample(1:3, size = 1, prob = trans_mat[hidden_states[i - 1],])
+}
+```
+
+
+#### Simulation of the observed speed
+
+
+```{r}
+speed <- exp(rnorm(n, mean = log(mu[hidden_states]) - sigma[hidden_states]^2/2, sd = sigma[hidden_states]))
+whole_data <- tibble(speed = speed, hidden = hidden_states, time = 1:n)
+
+ggplot(whole_data, aes(x=time, y=speed, col= as.factor(hidden_states))) + geom_point() 
+
+ggplot(whole_data, aes(x = speed, fill = as.factor(hidden_states)))+ geom_histogram() 
+
+```
+
+
+### Estimation  with no constraints
+
+```{r}
+mod <- depmix(speed  ~ 1, data = whole_data, nstates = 3, family = gaussian(log),
+  transition =   ~ 1)
+fm <- fit(mod)
+
+summary(fm)
+```
+
+
+As the patterns are very clear the model has no issues  to estimate the transition
+
+We can get the most credible sequence 
+
+```{r}
+posterior(fm)$state
+```
+
+and compare it to the 'true' states.
+
+```{r}
+table( posterior(fm)$state, whole_data$hidden )
+```
+
+
+## Test one nice trip with no constraint 
+
+### Finding a good trip 
+
+```{r}
+
+vms_data <- read_csv('data/VMS.csv')
+vms_data %>% dplyr::select( -AVERAGE_SPEED, -AVERAGE_COG, -Date.sent, -Year.sent, -Month.sent, -STATE_DATE, -Long.prev, -Lat.prev, -delta.pos, -VESSEL_TYPE) %>% mutate(Same.Trip_num = ifelse(Same.Trip == 'YES', 0, 1), trip_number = cumsum(Same.Trip_num) + 1)  %>% dplyr::select(-Same.Trip, -Same.Trip_num) -> small_vms_data
+
+
+small_vms_data %>% group_by(trip_number) %>% summarise(n_pos_by_trip = n())
+
+```
+
+
+It seems to be always YES on the same trip variable .
+
+I decide that a trip should not have 2 positions separetd by more than 10 hours.
+
+```{r}
+vms_data  %>%
+  mutate(NAME= as.factor(NAME)) %>% 
+  dplyr::select(-AVERAGE_SPEED, -AVERAGE_COG, -Date.sent, -delta.day.trip, Name.prev, -Month.sent, -STATE_DATE, -Long.prev, -Lat.prev, -delta.pos, -VESSEL_TYPE) %>% 
+  dplyr::arrange(NAME, SENT_DATE_UTC)  %>% 
+  group_by(NAME) %>%
+  mutate(diff = SENT_DATE_UTC - lag(SENT_DATE_UTC, default = first(SENT_DATE_UTC))) %>% 
+  ungroup() %>% 
+  mutate(same_trip_bis = ifelse(diff < 3600*10, 0, 1), trip_number = cumsum(same_trip_bis) + 1, trip_id = factor(paste(NAME, trip_number, sep = '_' )))  -> sub_vms_data
+
+```
+
+
+
+We can focus on more recent data
+
+
+```{r}
+sub_vms_data  %>% filter(Year.sent  > 2015, diff < 3600) %>% group_by(trip_id) %>% summarise(n = n())
+```
+
+
+Let's try `Brooker_955'
+
+
+```{r}
+sub_vms_data  %>% filter(trip_id == 'Brooker_955') -> trip1_data
+load(file = 'Australia.rda')
+australia_map %>% ggmap( extent = "normal") +  geom_point(aes(x = LONGITUDE, y = LATITUDE), data = trip1_data, alpha = .5)
+```
+
+
+It seems to stay at the port.
+
+
+
+
+Let's try `Corado_1880'
+
+
+```{r}
+sub_vms_data  %>% filter(trip_id == 'Corado_1880') -> trip1_data
+trip1_data %>% summary()
+load(file = 'Australia2.rda')
+australia_map2 %>% ggmap( extent = "panel") +  geom_line(aes(x = LONGITUDE, y = LATITUDE), data = trip1_data, alpha = .5)
+```
+
+
+It seems better
+
+
+
+

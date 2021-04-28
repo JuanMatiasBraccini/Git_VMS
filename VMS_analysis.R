@@ -21,8 +21,10 @@ library(caret)
 
 # 1. Data section ---------------------------------------------------------
 
+if(!exists('handl_OneDrive')) source('C:/Users/myb/OneDrive - Department of Primary Industries and Regional Development/Matias/Analyses/SOURCE_SCRIPTS/Git_other/handl_OneDrive.R')
+
 #Read in VMS and Vessels data
-WD='C:\\Users\\myb\\Desktop\\new\\Marie'
+WD=handl_OneDrive('Analyses/VMS')
 setwd(WD)
 Vessel.names.code=read.csv("Vessel_code_name.csv",stringsAsFactors = F)
 setwd(paste(WD,'\\Matias.data',sep=""))
